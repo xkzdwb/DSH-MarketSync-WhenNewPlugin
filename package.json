@@ -1,0 +1,20 @@
+{
+  "name": "dsh-market-sync",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "每天 00:00 给自己名下以 DSH 开头的插件仓库打 dsh-plugin topic（缺 cordis 标记的自动补），让 dsh.market 自动收录。零依赖，不调用模型。",
+  "main": "src/plugin.js",
+  "license": "MIT",
+  "engines": { "node": ">=20" },
+  "keywords": ["dsh", "cordis", "plugin", "market", "github", "automation"],
+  "exports": { ".": "./src/plugin.js", "./cordis.patch.yml": "./cordis.patch.yml", "./package.json": "./package.json" },
+  "files": ["src", "tools", "test", "examples", "cordis.patch.yml", "secrets.example.json", "README.md"],
+  "dsh": { "bundle": { "patch": "./cordis.patch.yml" } },
+  "scripts": {
+    "test": "node test/run-tests.mjs",
+    "authorize": "node tools/authorize.mjs",
+    "sync": "node tools/sync-once.mjs",
+    "sync:dry": "node tools/sync-once.mjs --dry-run"
+  }
+}
