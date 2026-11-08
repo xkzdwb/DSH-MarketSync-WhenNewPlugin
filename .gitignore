@@ -1,0 +1,5 @@
+secrets.json
+state.json
+audit/
+node_modules/
+*.tmp
