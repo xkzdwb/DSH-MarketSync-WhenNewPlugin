@@ -1,0 +1,14 @@
+# 手动启用片段：放进 profile 的 cordis.patch.yml 的 insert: 下（缩进对齐其它 - id:），重启 DSH 生效。
+# 用 `dsh plugin add` 安装的话不需要这段，本仓库根目录的 cordis.patch.yml 会被自动采用。
+- id: market-sync
+  name: 'dsh-market-sync'
+  config:
+    time: "00:00"
+    timeZone: Asia/Shanghai
+    catchUp: true
+    topics:
+      - dsh-plugin
+    namePattern: "^DSH"
+    requireMarkers: true
+    autoMark: true
+    maxRepos: 200
