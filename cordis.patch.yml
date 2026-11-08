@@ -1,0 +1,15 @@
+# market-sync — 每天 00:00 给自己名下以 DSH 开头的插件仓库打 dsh-plugin topic，
+# 缺 cordis 标记的自动补 package.json + cordis.patch.yml，让 dsh.market 每日 06:00 的采集自动收录。
+#
+# 默认值即推荐配置；要改就改下面 config，改完重启 DSH 生效。
+- insert:
+    - id: market-sync
+      name: 'dsh-market-sync'
+      config:
+        time: "00:00"
+        timeZone: Asia/Shanghai
+        catchUp: true
+        topics:
+          - dsh-plugin
+        # 不想让插件改仓库文件（只打 topic）就取消下面这行注释：
+        # autoMark: false
