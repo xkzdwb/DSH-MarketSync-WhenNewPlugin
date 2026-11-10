@@ -8,6 +8,8 @@ import { resolveToken } from './config.mjs'
 import { detectRepo } from './detect.mjs'
 import { createGithub, GithubError } from './github.mjs'
 import { ensureMarkers } from './marker.mjs'
+import { fetchIndex } from './market.mjs'
+import { ensureSubmission } from './submit.mjs'
 import { loadState, saveState, STATE_VERSION } from './state.mjs'
 
 /** 这个仓库要不要处理；返回跳过原因或 null。 */
@@ -55,6 +57,7 @@ export async function runSync({ settings, deps = {} }) {
   if (stateError !== undefined) log(`  ! ${stateError}`)
   if (state.version !== STATE_VERSION) state.version = STATE_VERSION
   if (state.repos === null || typeof state.repos !== 'object') state.repos = {}
+  if (state.submissions === null || typeof state.submissions !== 'object') state.submissions = {}
 
   const report = {
     startedAt,
@@ -71,8 +74,14 @@ export async function runSync({ settings, deps = {} }) {
     already: 0,
     skipped: [],
     errors: [],
+    submitted: [],
+    submitSkipped: [],
+    index: { attempted: false, ok: false, generatedAt: null, error: null },
     aborted: null,
   }
+
+  /** 通过检测的仓库，投稿阶段用（哪怕已经打了 topic）。 */
+  const eligibleRepos = []
 
   log(`[market-sync] 读取仓库列表（token 来源：${source}）…`)
   const repos = await github.listOwnedRepos({ max: settings.maxRepos * 3 })
@@ -180,6 +189,8 @@ export async function runSync({ settings, deps = {} }) {
       continue
     }
 
+    eligibleRepos.push({ repo, detection })
+
     // 2) 现有 topic
     let current
     try {
@@ -238,6 +249,81 @@ export async function runSync({ settings, deps = {} }) {
     }
   }
 
+  // 3) 投稿：已打 topic 但市场索引里没有的仓库，提 submission issue
+  if (settings.submitMissing && eligibleRepos.length > 0) {
+    report.index.attempted = true
+    let index = null
+    try {
+      const loadIndex = deps.fetchIndex ?? fetchIndex
+      index = await loadIndex(settings.marketIndexUrl, { timeoutMs: 90000 })
+      report.index.ok = true
+      report.index.generatedAt = index.generatedAt
+      report.index.count = index.count
+      log(`[market-sync] 市场索引 ${index.generatedAt}（${index.count} 个插件），核对投稿…`)
+    } catch (error) {
+      report.index.error = error?.message ?? String(error)
+      log(`  ! 市场索引读取失败，跳过投稿：${report.index.error}`)
+    }
+
+    if (index !== null) {
+      let created = 0
+      for (const { repo, detection } of eligibleRepos) {
+        if (!settings.dryRun && created >= settings.maxIssuesPerRun) {
+          report.submitSkipped.push({ fullName: repo.full_name, status: 'limit' })
+          continue
+        }
+        try {
+          const result = await ensureSubmission({
+            github,
+            repo,
+            detection,
+            settings,
+            index,
+            state,
+            log,
+            now,
+            dryRun: settings.dryRun,
+          })
+          if (result.status === 'created' || result.status === 'dry-run') {
+            report.submitted.push({
+              fullName: repo.full_name,
+              status: result.status,
+              issueNumber: result.issueNumber ?? null,
+              url: result.url ?? null,
+              reason: result.reason ?? null,
+            })
+            if (result.status === 'created') created += 1
+            appendAudit(settings.auditFile, {
+              at: new Date(now()).toISOString(),
+              fullName: repo.full_name,
+              action: result.status === 'created' ? 'submitted' : 'submit-planned',
+              issueNumber: result.issueNumber ?? null,
+              url: result.url ?? null,
+            })
+            if (result.status === 'created') {
+              log(`  + 投稿 ${repo.full_name} → #${result.issueNumber} ${result.url ?? ''}`)
+            }
+          } else if (result.status === 'existing' || result.status === 'closed') {
+            report.submitSkipped.push({
+              fullName: repo.full_name,
+              status: result.status,
+              issueNumber: result.issueNumber ?? null,
+            })
+          }
+        } catch (error) {
+          if (error?.kind === 'rate-limit' || error?.kind === 'unauthorized') throw error
+          report.errors.push({ fullName: repo.full_name, message: `投稿失败：${error?.message ?? String(error)}` })
+          appendAudit(settings.auditFile, {
+            at: new Date(now()).toISOString(),
+            fullName: repo.full_name,
+            action: 'submit-error',
+            message: error?.message ?? String(error),
+          })
+        }
+      }
+    }
+  }
+
   report.finishedAt = now()
   report.tookMs = report.finishedAt - startedAt
   report.requests = github.requests
@@ -249,6 +335,7 @@ export async function runSync({ settings, deps = {} }) {
     marked: report.marked.length,
     already: report.already,
     skipped: report.skipped.length,
+    submitted: report.submitted.filter((item) => item.status === 'created').length,
     errors: report.errors.length,
     dryRun: report.dryRun,
     aborted: report.aborted ?? null,
@@ -270,6 +357,7 @@ export async function runSync({ settings, deps = {} }) {
     `[market-sync] 完成：新增 ${report.tagged.length}` +
       (report.dryRun ? `（dryRun 计划 ${report.planned.length}）` : '') +
       `，补标记 ${report.marked.length}，已就绪 ${report.already}，跳过 ${report.skipped.length}，失败 ${report.errors.length}` +
+      `，投稿 ${report.submitted.filter((item) => item.status === 'created').length}` +
       (report.aborted === null ? '' : `（${report.aborted}）`),
   )
   return report
