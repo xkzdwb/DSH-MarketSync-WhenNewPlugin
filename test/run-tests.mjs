@@ -250,10 +250,12 @@ test('detect：detectLayer 对 package.json 无 cordis 给出理由', async () =
 
 function makeFakeApi(repos) {
   const topicsMap = new Map()
-  const calls = { list: 0, topics: 0, put: 0, root: 0, file: 0, write: 0 }
+  const calls = { list: 0, topics: 0, put: 0, root: 0, file: 0, write: 0, search: 0, issue: 0, issueGet: 0 }
   return {
     calls,
     topicsMap,
+    issues: [],
+    searchHits: [],
     requests: 0,
     async listOwnedRepos() {
       calls.list += 1
@@ -294,6 +296,34 @@ function makeFakeApi(repos) {
       const repo = repos.find((item) => item.full_name === fullName)
       repo.__files = { ...(repo.__files ?? {}), [path]: content }
       return { path, sha: `sha-${path}` }
+    },
+    async searchIssues() {
+      calls.search += 1
+      return { total_count: this.searchHits.length, items: this.searchHits }
+    },
+    async createIssue(repo, { title, body }) {
+      calls.issue += 1
+      const number = 100 + this.issues.length
+      const issue = {
+        number,
+        title,
+        body,
+        state: 'open',
+        html_url: `https://github.com/${repo}/issues/${number}`,
+      }
+      this.issues.push(issue)
+      this.searchHits.push(issue)
+      return issue
+    },
+    async getIssue(repo, number) {
+      calls.issueGet += 1
+      const issue = this.issues.find((item) => item.number === number)
+      if (issue === undefined) {
+        const error = new Error('not found')
+        error.status = 404
+        throw error
+      }
+      return issue
     },
   }
 }
@@ -368,6 +398,7 @@ function syncSettings(dir, overrides = {}) {
       auditFile: join(dir, 'audit/sync.jsonl'),
       secretsFile: join(dir, 'secrets.json'),
       token: 'ghp_testtokenxxxxxxxx',
+      submitMissing: false,
       ...overrides,
     },
     { pluginRoot: dir },
@@ -546,6 +577,139 @@ test('sync：dryRun 时补标记也只计划', async () => {
   assert.equal(api.calls.write, 0)
   assert.deepEqual(api.topicsMap.size, 0)
   assert.deepEqual(report.planned.map((item) => item.fullName), ['me/DSH-Epsilon'])
+})
+
+// ---------------------------------------------------------------- submit
+
+function fakeIndex(generatedAt, fullNames = []) {
+  const generatedAtMs = Date.parse(generatedAt)
+  return {
+    generatedAt,
+    generatedAtMs,
+    count: fullNames.length,
+    fullNames: new Set(fullNames.map((name) => name.toLowerCase())),
+  }
+}
+
+function submitDeps(api, generatedAt, fullNames = []) {
+  return {
+    github: api,
+    now: () => at(2026, 11, 9, 0, 0),
+    log: () => {},
+    fetchIndex: async () => fakeIndex(generatedAt, fullNames),
+  }
+}
+
+test('submit：索引里没有的合格仓库会自动提 issue 并记进 state', async () => {
+  const dir = tmp()
+  const api = makeFakeApi(makeRepos())
+  api.topicsMap.set('me/DSH-Beta', ['dsh-plugin'])
+  api.topicsMap.set('me/DSH-Skill', ['dsh-plugin'])
+  const report = await runSync({
+    settings: syncSettings(dir, { submitMissing: true }),
+    deps: submitDeps(api, '2026-11-08T23:55:14.934Z'),
+  })
+  assert.equal(report.index.ok, true)
+  assert.equal(report.submitted.length, 3)
+  assert.deepEqual(report.submitted.map((item) => item.status), ['created', 'created', 'created'])
+  assert.equal(api.calls.issue, 3)
+  assert.equal(api.issues[0].title, '[提交插件] DSH-Alpha')
+  assert.match(api.issues[0].body, /https:\/\/github\.com\/me\/DSH-Alpha/)
+  assert.match(api.issues[0].body, /是（dsh-plugin）/)
+  const { state } = loadState(join(dir, 'state.json'))
+  assert.equal(state.submissions['me/dsh-alpha'].issueNumber, 100)
+
+  // 第二天再跑：索引仍未收录，但已有 open issue，不再重复提
+  const second = await runSync({
+    settings: syncSettings(dir, { submitMissing: true }),
+    deps: submitDeps(api, '2026-11-09T23:55:14.934Z'),
+  })
+  assert.equal(second.submitted.length, 0)
+  assert.equal(api.calls.issue, 3)
+})
+
+test('submit：索引里已收录时不提 issue', async () => {
+  const dir = tmp()
+  const api = makeFakeApi(makeRepos())
+  api.topicsMap.set('me/DSH-Beta', ['dsh-plugin'])
+  api.topicsMap.set('me/DSH-Skill', ['dsh-plugin'])
+  const report = await runSync({
+    settings: syncSettings(dir, { submitMissing: true }),
+    deps: submitDeps(api, '2026-11-08T23:55:14.934Z', [
+      'me/DSH-Alpha',
+      'me/DSH-Beta',
+      'me/DSH-Skill',
+    ]),
+  })
+  assert.equal(report.submitted.length, 0)
+  assert.equal(api.calls.issue, 0)
+  assert.equal(api.calls.search, 0)
+})
+
+test('submit：仓库比索引新时按 too-new 跳过，等下一轮', async () => {
+  const dir = tmp()
+  const repos = makeRepos()
+  repos[1].updated_at = '2026-11-09T10:00:00Z'
+  const api = makeFakeApi(repos)
+  api.topicsMap.set('me/DSH-Beta', ['dsh-plugin'])
+  api.topicsMap.set('me/DSH-Skill', ['dsh-plugin'])
+  const report = await runSync({
+    settings: syncSettings(dir, { submitMissing: true }),
+    deps: submitDeps(api, '2026-11-08T23:55:14.934Z'),
+  })
+  // Alpha 与 Skill 照投；Beta 因为索引比它旧，跳过
+  assert.deepEqual(report.submitted.map((item) => item.fullName).sort(), ['me/DSH-Alpha', 'me/DSH-Skill'])
+  assert.equal(api.calls.search, 2)
+})
+
+test('submit：dryRun 只计划，不建 issue', async () => {
+  const dir = tmp()
+  const api = makeFakeApi(makeRepos())
+  api.topicsMap.set('me/DSH-Beta', ['dsh-plugin'])
+  api.topicsMap.set('me/DSH-Skill', ['dsh-plugin'])
+  const report = await runSync({
+    settings: syncSettings(dir, { submitMissing: true, dryRun: true }),
+    deps: submitDeps(api, '2026-11-08T23:55:14.934Z'),
+  })
+  assert.equal(report.submitted.length, 3)
+  assert.match(report.submitted[0].reason, /会提交 \[提交插件\]/)
+  assert.equal(api.calls.issue, 0)
+  assert.equal(api.calls.search, 0)
+})
+
+test('submit：市场里已有人提过时复用那条 issue', async () => {
+  const dir = tmp()
+  const api = makeFakeApi(makeRepos())
+  api.topicsMap.set('me/DSH-Beta', ['dsh-plugin'])
+  api.topicsMap.set('me/DSH-Skill', ['dsh-plugin'])
+  api.searchHits.push({
+    number: 77,
+    state: 'open',
+    html_url: 'https://github.com/2BingLing/dsh-market/issues/77',
+    body: '仓库：https://github.com/me/DSH-Alpha',
+  })
+  const report = await runSync({
+    settings: syncSettings(dir, { submitMissing: true }),
+    deps: submitDeps(api, '2026-11-08T23:55:14.934Z'),
+  })
+  assert.equal(api.calls.issue, 2, 'Alpha 复用 #77，Beta/Skill 新建')
+  assert.ok(report.submitted.every((item) => item.status === 'created'))
+  const { state } = loadState(join(dir, 'state.json'))
+  assert.equal(state.submissions['me/dsh-alpha'].issueNumber, 77)
+})
+
+test('submit：maxIssuesPerRun 限制单次投稿数量', async () => {
+  const dir = tmp()
+  const api = makeFakeApi(makeRepos())
+  api.topicsMap.set('me/DSH-Beta', ['dsh-plugin'])
+  api.topicsMap.set('me/DSH-Skill', ['dsh-plugin'])
+  const report = await runSync({
+    settings: syncSettings(dir, { submitMissing: true, maxIssuesPerRun: 1 }),
+    deps: submitDeps(api, '2026-11-08T23:55:14.934Z'),
+  })
+  assert.equal(report.submitted.length, 1)
+  assert.equal(api.calls.issue, 1)
+  assert.deepEqual(report.submitSkipped.map((item) => item.status), ['limit', 'limit'])
 })
 
 // ---------------------------------------------------------------- runner
