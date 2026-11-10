@@ -97,6 +97,7 @@ DSH 跑起来后：`http://127.0.0.1:10605/plugin-market-sync/status`（端口�
 
 - `schedule` / `nextRunLocal` / `lastSuccessLocal`
 - `lastSummary`（扫描、命中、新增、已就绪、跳过、失败、投稿）
+- `autoMark` / `submitMissing` / `marketRepo` / `maxIssuesPerRun`（当前生效的开关）
 - `lastError` / `retryAtLocal` / `gaveUpToday`
 
 ## 市场那边什么时候能看到
