@@ -215,5 +215,17 @@ export function createGithub({
       const data = await request('PUT', `/repos/${fullName}/contents/${path}`, body)
       return { path: data?.content?.path ?? path, sha: data?.content?.sha ?? null }
     },
+    /** 在市场仓库里新建投稿 issue。 */
+    createIssue(repo, { title, body }) {
+      return request('POST', `/repos/${repo}/issues`, { title, body })
+    },
+    /** 读单个 issue，用来判断投稿后来是不是被关掉了。 */
+    getIssue(repo, number) {
+      return request('GET', `/repos/${repo}/issues/${number}`)
+    },
+    /** 搜索 issue（投稿前查重）。 */
+    searchIssues(query, { perPage = 20 } = {}) {
+      return request('GET', `/search/issues?q=${encodeURIComponent(query)}&per_page=${perPage}`)
+    },
   }
 }
