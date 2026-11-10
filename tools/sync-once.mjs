@@ -32,6 +32,7 @@ function parseArgs(argv) {
     else if (arg === '--include-private') out.config.includePrivate = true
     else if (arg === '--no-markers') out.config.requireMarkers = false
     else if (arg === '--no-auto-mark') out.config.autoMark = false
+    else if (arg === '--no-submit') out.config.submitMissing = false
     else if (arg === '--help' || arg === '-h') out.help = true
     else throw new Error(`不认识的参数：${arg}`)
   }
@@ -63,6 +64,9 @@ async function main() {
         补标记: report.marked.map((item) => `${item.fullName}（${item.files.join(' + ')}${item.planned ? '，计划' : ''}）`),
         计划: report.planned.map((item) => item.fullName),
         已就绪: report.already,
+        市场索引: report.index,
+        投稿: report.submitted,
+        投稿跳过: report.submitSkipped,
         跳过: report.skipped,
         失败: report.errors,
         请求数: report.requests,
