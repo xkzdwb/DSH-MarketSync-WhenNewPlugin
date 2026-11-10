@@ -44,7 +44,19 @@ function apply(ctx, rawConfig) {
         return
       }
       try {
-        sendJson(res, 200, runner.status(), { head: req.method === 'HEAD' })
+        const status = runner.status()
+        sendJson(
+          res,
+          200,
+          {
+            ...status,
+            autoMark: settings.autoMark,
+            submitMissing: settings.submitMissing,
+            marketRepo: settings.marketRepo,
+            maxIssuesPerRun: settings.maxIssuesPerRun,
+          },
+          { head: req.method === 'HEAD' },
+        )
       } catch (error) {
         sendJson(res, 500, { error: error?.message ?? String(error) })
       }
