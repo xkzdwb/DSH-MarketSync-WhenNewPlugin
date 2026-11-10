@@ -22,6 +22,10 @@ export const DEFAULTS = {
   markerCommitMessage: 'chore(dsh): 补市场收录标记（cordis.patch.yml + dsh.bundle.patch）',
   followSubdir: true,            // 根目录没标记时，再看一层子目录（monorepo 常见）
   maxRepos: 200,                 // 最多扫多少个仓库（防止 API 额度被吃光）
+  submitMissing: true,           // 已打 topic 但市场索引里没有 → 自动提 submission issue
+  marketIndexUrl: 'https://2bingling.github.io/dsh-market/plugins-lite.json',
+  marketRepo: '2BingLing/dsh-market',
+  maxIssuesPerRun: 3,            // 一次最多提几个 issue（防止误配置刷屏）
   secretsFile: '',               // {"githubToken":"…"}；留空 = 插件目录 secrets.json
   token: '',                     // 应急用：也可直接写在 config 里（不推荐）
   stateFile: '',                 // 留空 = 插件目录 state.json
@@ -140,6 +144,10 @@ export function readSettings(rawConfig, { pluginRoot } = {}) {
     markerCommitMessage: String(value(input.markerCommitMessage, DEFAULTS.markerCommitMessage)),
     followSubdir: bool(input.followSubdir, DEFAULTS.followSubdir),
     maxRepos: numberOr(input.maxRepos, DEFAULTS.maxRepos, { min: 1, max: 2000, integer: true }),
+    submitMissing: bool(input.submitMissing, DEFAULTS.submitMissing),
+    marketIndexUrl: String(value(input.marketIndexUrl, DEFAULTS.marketIndexUrl)),
+    marketRepo: String(value(input.marketRepo, DEFAULTS.marketRepo)),
+    maxIssuesPerRun: numberOr(input.maxIssuesPerRun, DEFAULTS.maxIssuesPerRun, { min: 0, max: 20, integer: true }),
     secretsPath: resolvePath(value(input.secretsFile, DEFAULTS.secretsFile), root, 'secrets.json'),
     token: String(value(input.token, DEFAULTS.token)).trim(),
     stateFile: resolvePath(value(input.stateFile, DEFAULTS.stateFile), root, 'state.json'),
